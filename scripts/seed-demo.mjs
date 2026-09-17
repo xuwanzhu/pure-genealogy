@@ -1,9 +1,13 @@
-// 演示数据生成脚本:node scripts/seed-demo.mjs [--force]
-// --force: 清空现有数据后重新插入
+// 演示数据生成脚本: node scripts/seed-demo.mjs [--force]
+// --force: 清空演示家族数据后重新插入 (不影响其他家族)
+// 演示账号: 管理员 13800000001 / 只读 13800000002, 密码均为 Test123456
 import mysql from "mysql2/promise";
+import bcrypt from "bcryptjs";
 import { dbConfig } from "./load-env.mjs";
 
 const FORCE = process.argv.includes("--force");
+// 固定邀请码作为演示家族标记,--force 只清这个家族,不影响真实数据
+const DEMO_INVITE_CODE = "88888888";
 
 const pool = mysql.createPool({
   ...dbConfig(),
@@ -11,20 +15,27 @@ const pool = mysql.createPool({
   dateStrings: true,
 });
 
-/** 生平事迹 (Lexical 编辑器 JSON 格式) */
+/** 生平事迹 (Slate 编辑器 JSON 格式) */
 const bio = (text) =>
   JSON.stringify([{ type: "paragraph", children: [{ text }] }]);
 
-// name → id 映射,用于建立父子关系
+// 演示账号
+const DEMO_ACCOUNTS = [
+  { phone: "13800000001", password: "Test123456", role: "admin", memberName: "刘志强" },
+  { phone: "13800000002", password: "Test123456", role: "viewer", memberName: "刘晓梅" },
+];
+
+// name → id 映射
 const idMap = new Map();
 
-async function insertMember(m) {
+async function insertMember(familyId, m) {
   const [result] = await pool.execute(
     `INSERT INTO family_members
-       (name, generation, sibling_order, father_id, gender, official_position,
-        is_alive, spouse, remarks, birthday, death_date, residence_place)
+       (family_id, name, generation, sibling_order, father_id, gender, official_position,
+        is_alive, remarks, birthday, death_date, residence_place)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
+      familyId,
       m.name,
       m.generation,
       m.sibling_order ?? null,
@@ -32,7 +43,6 @@ async function insertMember(m) {
       m.gender,
       m.official_position ?? null,
       m.isAlive ? 1 : 0,
-      m.spouse ?? null,
       m.remarks ? bio(m.remarks) : null,
       m.birthday ?? null,
       m.deathDate ?? null,
@@ -41,6 +51,21 @@ async function insertMember(m) {
   );
   idMap.set(m.name, result.insertId);
   return result.insertId;
+}
+
+/** 把 spouse 文本转成正式成员并双向关联 */
+async function attachSpouse(familyId, memberName, spouseName, generation) {
+  const memberId = idMap.get(memberName);
+  const memberGender = MEMBERS.find((m) => m.name === memberName)?.gender;
+  const [result] = await pool.execute(
+    `INSERT INTO family_members (family_id, name, generation, gender, is_alive, spouse_id)
+     VALUES (?, ?, ?, ?, 1, ?)`,
+    [familyId, spouseName, generation, memberGender === "男" ? "女" : "男", memberId]
+  );
+  await pool.execute(
+    "UPDATE family_members SET spouse_id = ? WHERE id = ?",
+    [result.insertId, memberId]
+  );
 }
 
 const MEMBERS = [
@@ -136,33 +161,96 @@ const MEMBERS = [
 ];
 
 async function main() {
-  const [rows] = await pool.query("SELECT COUNT(*) AS total FROM family_members");
-  const total = rows[0].total;
-
-  if (total > 0 && !FORCE) {
-    console.log(`表中已有 ${total} 条数据,跳过。如需重新生成请加 --force`);
-    return;
-  }
-  if (FORCE) {
-    await pool.execute("DELETE FROM family_members");
-    console.log("已清空原有数据");
-  }
-
-  for (const m of MEMBERS) {
-    await insertMember(m);
-  }
-
-  const [after] = await pool.query("SELECT COUNT(*) AS total FROM family_members");
-  console.log(`✓ 已插入 ${after.total} 位成员,共 4 代`);
-
-  // 校验父子关系
-  const [links] = await pool.query(
-    `SELECT c.name AS child, f.name AS father
-     FROM family_members c JOIN family_members f ON c.father_id = f.id
-     ORDER BY c.generation`
+  // 1. 演示家族: 已存在则复用,--force 则清空其数据重建 (不影响其他家族)
+  let [families] = await pool.query(
+    "SELECT id FROM families WHERE invite_code = ?",
+    [DEMO_INVITE_CODE]
   );
-  console.log(`✓ 父子关系 ${links.length} 条:`);
-  links.forEach((l) => console.log(`  ${l.father} → ${l.child}`));
+  let familyId;
+
+  if (families.length > 0) {
+    familyId = families[0].id;
+    const [rows] = await pool.query(
+      "SELECT COUNT(*) AS total FROM family_members WHERE family_id = ?",
+      [familyId]
+    );
+    if (rows[0].total > 0 && !FORCE) {
+      console.log(`演示家族已存在 (id=${familyId}),已有 ${rows[0].total} 位成员,跳过。如需重新生成请加 --force`);
+      await pool.end();
+      return;
+    }
+    if (FORCE) {
+      // 只清演示家族的成员和会话,不动账号与其他家族
+      await pool.execute("DELETE FROM family_members WHERE family_id = ?", [familyId]);
+      await pool.execute("DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE family_id = ?)", [familyId]);
+      await pool.execute("DELETE FROM users WHERE family_id = ?", [familyId]);
+      console.log("已清空演示家族原有数据");
+    }
+  } else {
+    const [result] = await pool.execute(
+      "INSERT INTO families (surname, name, invite_code) VALUES ('刘', '刘氏', ?)",
+      [DEMO_INVITE_CODE]
+    );
+    familyId = result.insertId;
+    console.log(`✓ 已创建演示家族「刘氏」(邀请码 ${DEMO_INVITE_CODE})`);
+  }
+
+  // 2. 插入成员 (含父子关系)
+  for (const m of MEMBERS) {
+    await insertMember(familyId, m);
+  }
+
+  // 3. 配偶转正式成员并双向关联
+  for (const m of MEMBERS) {
+    if (m.spouse) {
+      await attachSpouse(familyId, m.name, m.spouse, m.generation);
+    }
+  }
+
+  const [after] = await pool.query(
+    "SELECT COUNT(*) AS total FROM family_members WHERE family_id = ?",
+    [familyId]
+  );
+  console.log(`✓ 已插入 ${after[0].total} 位成员 (含配偶),共 4 代`);
+
+  // 4. 演示账号 (手机号已存在则跳过)
+  for (const acc of DEMO_ACCOUNTS) {
+    const [existing] = await pool.query("SELECT id FROM users WHERE phone = ?", [acc.phone]);
+    if (existing.length > 0) {
+      console.log(`· 账号 ${acc.phone} 已存在,跳过`);
+      continue;
+    }
+    const hash = await bcrypt.hash(acc.password, 10);
+    const [userResult] = await pool.execute(
+      "INSERT INTO users (phone, password_hash, role, family_id) VALUES (?, ?, ?, ?)",
+      [acc.phone, hash, acc.role, familyId]
+    );
+    // 关联对应族谱成员
+    const memberId = idMap.get(acc.memberName);
+    if (memberId) {
+      await pool.execute(
+        "UPDATE family_members SET user_id = ? WHERE id = ? AND user_id IS NULL",
+        [userResult.insertId, memberId]
+      );
+    }
+    console.log(`✓ 演示账号: ${acc.phone} / ${acc.password} (${acc.role === "admin" ? "管理员" : "只读"}${memberId ? `,关联成员 ${acc.memberName}` : ""})`);
+  }
+
+  // 5. 校验
+  const [links] = await pool.query(
+    `SELECT c.name AS child, f.name AS father FROM family_members c
+     JOIN family_members f ON c.father_id = f.id
+     WHERE c.family_id = ? ORDER BY c.generation`,
+    [familyId]
+  );
+  const [spouses] = await pool.query(
+    `SELECT m.name, s.name AS spouse FROM family_members m
+     JOIN family_members s ON m.spouse_id = s.id
+     WHERE m.family_id = ? AND m.id < s.id`,
+    [familyId]
+  );
+  console.log(`✓ 父子关系 ${links.length} 条,配偶 ${spouses.length} 对`);
+  console.log(`登录体验: 管理员 13800000001 / Test123456,只读 13800000002 / Test123456`);
 
   await pool.end();
 }

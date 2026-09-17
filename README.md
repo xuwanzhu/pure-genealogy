@@ -118,9 +118,16 @@ npm run dev
 ### 6. （可选）演示数据
 
 ```bash
-node scripts/seed-demo.mjs          # 插入演示数据
-node scripts/seed-demo.mjs --force  # 清空后重新插入
+node scripts/seed-demo.mjs          # 插入演示数据 (已存在则跳过)
+node scripts/seed-demo.mjs --force  # 清空演示家族后重新插入 (不影响其他家族数据)
 ```
+
+生成四代演示家族「刘氏」（24 位成员，含配偶双向关联），并附两个演示账号：
+
+| 手机号 | 密码 | 角色 | 关联成员 |
+|---|---|---|---|
+| 13800000001 | Test123456 | 管理员（可写） | 刘志强 |
+| 13800000002 | Test123456 | 只读成员 | 刘晓梅 |
 
 ## 🗄️ 数据库结构
 
