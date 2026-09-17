@@ -4,63 +4,76 @@ import dynamic from "next/dynamic";
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import type { StatisticsData } from "./actions";
 
 // 图表加载骨架屏
 function ChartsSkeleton() {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-      {/* 概览卡片骨架 */}
-      <Card className="col-span-1 md:col-span-2">
-        <CardHeader>
-          <CardTitle>数据概览</CardTitle>
-          <CardDescription>家族成员基础数据统计</CardDescription>
-        </CardHeader>
-        <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="p-4 bg-muted/50 rounded-lg animate-pulse">
-              <div className="h-9 w-16 bg-muted rounded mx-auto mb-2" />
-              <div className="h-4 w-12 bg-muted rounded mx-auto" />
+    <div className="space-y-6">
+      {/* KPI 骨架 */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        {[1, 2, 3, 4].map((i) => (
+          <div
+            key={i}
+            className="rounded-2xl border bg-card/60 p-5 animate-pulse"
+          >
+            <div className="flex items-start justify-between">
+              <div className="w-full">
+                <div className="h-9 w-16 rounded bg-muted" />
+                <div className="mt-3 h-3.5 w-16 rounded bg-muted" />
+              </div>
+              <div className="h-11 w-11 rounded-xl bg-muted" />
             </div>
-          ))}
-        </CardContent>
-      </Card>
+          </div>
+        ))}
+      </div>
 
-      {/* 饼图骨架 */}
-      {[1, 2].map((i) => (
-        <Card key={i}>
-          <CardHeader>
-            <div className="h-6 w-24 bg-muted rounded animate-pulse" />
-            <div className="h-4 w-32 bg-muted rounded animate-pulse mt-1" />
-          </CardHeader>
-          <CardContent className="h-[300px] flex items-center justify-center">
-            <div className="w-40 h-40 rounded-full bg-muted animate-pulse" />
-          </CardContent>
-        </Card>
-      ))}
+      {/* 家族剪影骨架 */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {[1, 2, 3, 4].map((i) => (
+          <div key={i} className="flex items-center gap-3 rounded-xl border bg-card/50 px-4 py-3 animate-pulse">
+            <div className="h-9 w-9 rounded-lg bg-muted" />
+            <div className="flex-1">
+              <div className="h-3 w-16 rounded bg-muted" />
+              <div className="mt-1.5 h-3.5 w-24 rounded bg-muted" />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* 环形图骨架 */}
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+        {[1, 2].map((i) => (
+          <Card key={i} className="rounded-2xl">
+            <div className="px-6 pt-5">
+              <div className="h-5 w-24 rounded bg-muted animate-pulse" />
+              <div className="mt-1.5 h-3.5 w-36 rounded bg-muted animate-pulse" />
+            </div>
+            <CardContent>
+              <div className="mx-auto mt-2 h-[240px] w-[240px] rounded-full bg-muted/60 animate-pulse" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
 
       {/* 柱状图骨架 */}
-      {[1, 2].map((i) => (
-        <Card key={i} className="col-span-1 md:col-span-2">
-          <CardHeader>
-            <div className="h-6 w-24 bg-muted rounded animate-pulse" />
-            <div className="h-4 w-40 bg-muted rounded animate-pulse mt-1" />
-          </CardHeader>
-          <CardContent className="h-[300px] flex items-end justify-around p-4">
-            {[1, 2, 3, 4, 5, 6].map((j) => (
+      <Card className="rounded-2xl">
+        <div className="px-6 pt-5">
+          <div className="h-5 w-24 rounded bg-muted animate-pulse" />
+        </div>
+        <CardContent>
+          <div className="h-[300px] flex items-end justify-around gap-6 p-4">
+            {[1, 2, 3, 4, 5].map((j) => (
               <div
                 key={j}
-                className="w-12 bg-muted rounded-t animate-pulse"
-                style={{ height: `${Math.random() * 60 + 40}%` }}
+                className="w-full max-w-[52px] rounded-t-lg bg-muted/60 animate-pulse"
+                style={{ height: `${30 + j * 12}%` }}
               />
             ))}
-          </CardContent>
-        </Card>
-      ))}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

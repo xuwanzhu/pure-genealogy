@@ -10,17 +10,19 @@ import {
     Maximize,
     Minimize,
     Search,
-    X
+    X,
+    List,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { cn, FAMILY_SURNAME } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import type { BiographyMember } from "./actions";
 import { RichTextViewer } from "@/components/rich-text/viewer";
 
 interface BiographyBookProps {
     members: BiographyMember[];
+    surname?: string;
 }
 
 // 单独的页面组件（使用 memo 避免不必要的重渲染）
@@ -161,14 +163,33 @@ const MemberPage = memo(function MemberPage({
                         </span>
                     </div>
                     <div className="bg-stone-50/50 rounded-md p-3 sm:p-4 border border-stone-100">
-                        <div className="[&_*]:!text-stone-700">
-                            <RichTextViewer
-                                key={member.id}
-                                value={member.remarks}
-                                animate={false}
-                                className="!prose-stone [&_*]:!text-stone-700"
-                            />
-                        </div>
+                        {member.remarks ? (
+                            <div className="[&_*]:!text-stone-700">
+                                <RichTextViewer
+                                    key={member.id}
+                                    value={member.remarks}
+                                    animate={false}
+                                    className="!prose-stone [&_*]:!text-stone-700"
+                                />
+                            </div>
+                        ) : (
+                            /* 无生平内容: 展示已知信息摘要 + 待补录占位 */
+                            <div className="py-6 flex flex-col items-center justify-center gap-3 text-center">
+                                <div className="w-10 h-10 rounded-full bg-amber-100/60 flex items-center justify-center">
+                                    <ScrollText className="w-5 h-5 text-amber-600/60" />
+                                </div>
+                                <p className="text-sm text-stone-500 font-serif leading-relaxed">
+                                    {member.birthday
+                                        ? `${member.name}，生于 ${formatDate(member.birthday)}`
+                                        : `${member.name}，${member.is_alive ? "在世" : "已故"}族人`}
+                                    {member.residence_place ? `，现居${member.residence_place}` : ""}
+                                    {member.official_position ? `，${member.official_position}` : ""}。
+                                </p>
+                                <p className="text-xs text-stone-400 font-serif italic">
+                                    生平事迹待补录 · 可在成员管理中编辑
+                                </p>
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
@@ -183,7 +204,7 @@ const MemberPage = memo(function MemberPage({
     );
 });
 
-export function BiographyBook({ members }: BiographyBookProps) {
+export function BiographyBook({ members, surname }: BiographyBookProps) {
     // 页面状态: -1 = 封面, 0-n = 成员页
     const [currentPage, setCurrentPage] = useState(-1);
     const [isFlipping, setIsFlipping] = useState(false);
@@ -202,15 +223,22 @@ export function BiographyBook({ members }: BiographyBookProps) {
 
     const totalPages = members.length;
 
+    // 进度条填充百分比: 封面=0%, 末页=100%
+    const progressPercent = totalPages > 0
+        ? ((currentPage + 1) / totalPages) * 100
+        : 0;
+
     const formatDate = useCallback((dateStr: string | null) => {
         if (!dateStr) return "-";
         const [y, m, d] = dateStr.split("-");
         return `${y}年${m}月${d}日`;
     }, []);
 
-    // 搜索结果
+    // 目录列表 (无关键字时显示全部,有关键字时过滤)
     const searchResults = useMemo(() => {
-        if (!searchQuery.trim()) return [];
+        if (!searchQuery.trim()) {
+            return members.map((member, index) => ({ member, index }));
+        }
         const query = searchQuery.trim().toLowerCase();
         return members
             .map((member, index) => ({ member, index }))
@@ -364,9 +392,9 @@ export function BiographyBook({ members }: BiographyBookProps) {
                     size="icon"
                     className="w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white/70 hover:text-white backdrop-blur-sm"
                     onClick={() => setIsSearchOpen(true)}
-                    title="搜索人物 (Ctrl+F)"
+                    title="目录 (Ctrl+F)"
                 >
-                    <Search className="w-5 h-5" />
+                    <List className="w-5 h-5" />
                 </Button>
                 <Button
                     variant="ghost"
@@ -383,16 +411,16 @@ export function BiographyBook({ members }: BiographyBookProps) {
                 </Button>
             </div>
 
-            {/* 搜索弹窗 */}
+            {/* 目录弹窗 */}
             {isSearchOpen && (
                 <div className="absolute inset-0 z-40 flex items-start justify-center pt-20 bg-black/50 backdrop-blur-sm">
                     <div className="bg-stone-800 rounded-lg shadow-2xl w-full max-w-md mx-4 overflow-hidden border border-stone-700">
                         <div className="p-4 border-b border-stone-700 flex items-center gap-3">
-                            <Search className="w-5 h-5 text-stone-400" />
+                            <List className="w-5 h-5 text-stone-400" />
                             <Input
                                 ref={searchInputRef}
                                 type="text"
-                                placeholder="输入人物姓名..."
+                                placeholder="搜索姓名筛选目录..."
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
                                 className="flex-1 bg-transparent border-none text-white placeholder:text-stone-500 focus-visible:ring-0"
@@ -409,8 +437,8 @@ export function BiographyBook({ members }: BiographyBookProps) {
                                 <X className="w-4 h-4" />
                             </Button>
                         </div>
-                        <div className="max-h-64 overflow-y-auto">
-                            {searchQuery.trim() && searchResults.length === 0 ? (
+                        <div className="max-h-80 overflow-y-auto">
+                            {searchResults.length === 0 ? (
                                 <div className="p-4 text-center text-stone-500">
                                     未找到匹配的人物
                                 </div>
@@ -418,14 +446,17 @@ export function BiographyBook({ members }: BiographyBookProps) {
                                 searchResults.map(({ member, index }) => (
                                     <button
                                         key={member.id}
-                                        className="w-full px-4 py-3 text-left hover:bg-stone-700 transition-colors flex items-center gap-3"
+                                        className={cn(
+                                            "w-full px-4 py-3 text-left hover:bg-stone-700 transition-colors flex items-center gap-3",
+                                            currentPage === index && "bg-stone-700/60"
+                                        )}
                                         onClick={() => jumpToPage(index)}
                                     >
-                                        <div className="w-8 h-8 rounded-full bg-amber-900/50 flex items-center justify-center">
+                                        <div className="w-8 h-8 rounded-full bg-amber-900/50 flex items-center justify-center shrink-0">
                                             <User className="w-4 h-4 text-amber-400" />
                                         </div>
-                                        <div>
-                                            <p className="text-white font-medium">{member.name}</p>
+                                        <div className="min-w-0 flex-1">
+                                            <p className="text-white font-medium truncate">{member.name}</p>
                                             <p className="text-xs text-stone-400">
                                                 {member.generation
                                                     ? `第 ${member.generation} 世`
@@ -646,36 +677,64 @@ export function BiographyBook({ members }: BiographyBookProps) {
                 </div>
             </div>
 
-            {/* 页码指示 */}
-            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-4 z-20">
-                <div className="flex gap-1.5">
-                    {Array.from({ length: totalPages + 1 }).map((_, i) => (
-                        <button
-                            key={i}
-                            className={cn(
-                                "w-2 h-2 rounded-full transition-all duration-300",
-                                (i === 0 && currentPage === -1) ||
-                                    (i > 0 && currentPage === i - 1)
-                                    ? "bg-amber-400 scale-125"
-                                    : "bg-white/30 hover:bg-white/50"
-                            )}
-                            onClick={() => jumpToPage(i - 1)}
-                            title={i === 0 ? "封面" : `第 ${i} 页`}
-                        />
-                    ))}
-                </div>
+            {/* 底部导航: 页码 + 进度条 + 封面/末页按钮 */}
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 z-20 px-4">
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs text-white/60 hover:text-white hover:bg-white/10"
+                    onClick={() => jumpToPage(-1)}
+                    disabled={currentPage === -1 || isFlipping}
+                    title="返回封面"
+                >
+                    封面
+                </Button>
+                <span className="text-xs text-white/60 font-serif tabular-nums whitespace-nowrap">
+                    {currentPage === -1 ? "封面" : `${currentPage + 1} / ${totalPages}`}
+                </span>
+                <input
+                    type="range"
+                    min={-1}
+                    max={totalPages - 1}
+                    value={currentPage}
+                    onChange={(e) => {
+                        const target = parseInt(e.target.value, 10);
+                        if (!isFlipping) jumpToPage(target);
+                    }}
+                    className="w-32 sm:w-48 h-2 rounded-full appearance-none cursor-pointer
+                              [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4
+                              [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white
+                              [&::-webkit-slider-thumb]:shadow-[0_0_0_3px_rgba(251,191,36,0.6)] [&::-webkit-slider-thumb]:cursor-pointer
+                              [&::-webkit-slider-thumb]:transition-shadow
+                              [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full
+                              [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-amber-400"
+                    style={{
+                        background: `linear-gradient(to right, #f59e0b 0%, #fbbf24 ${(progressPercent).toFixed(1)}%, rgba(255,255,255,0.25) ${progressPercent.toFixed(1)}%, rgba(255,255,255,0.25) 100%)`,
+                    }}
+                    aria-label="跳页"
+                />
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs text-white/60 hover:text-white hover:bg-white/10"
+                    onClick={() => jumpToPage(totalPages - 1)}
+                    disabled={currentPage >= totalPages - 1 || isFlipping}
+                    title="跳到末页"
+                >
+                    末页
+                </Button>
             </div>
 
             {/* 键盘操作提示 */}
             <div className="absolute bottom-12 left-1/2 -translate-x-1/2 text-white/40 text-xs hidden sm:block z-20">
-                ← → 翻页 · F 全屏 · Ctrl+F 搜索
+                ← → 翻页 · F 全屏 · Ctrl+F 目录
             </div>
         </div>
     );
 }
 
 // 封面组件（使用 memo 避免不必要的重渲染）
-const CoverPage = memo(function CoverPage({ totalPages }: { totalPages: number }) {
+const CoverPage = memo(function CoverPage({ totalPages, surname }: { totalPages: number; surname?: string }) {
     return (
         <div className="w-full h-full bg-gradient-to-br from-amber-900 via-amber-800 to-amber-950 rounded-r-lg shadow-2xl flex flex-col items-center justify-center p-8 relative overflow-hidden">
             {/* 封面装饰纹理 */}
@@ -695,21 +754,21 @@ const CoverPage = memo(function CoverPage({ totalPages }: { totalPages: number }
                     <BookOpen className="w-16 h-16 sm:w-24 sm:h-24 mx-auto text-amber-200/80" />
                 </div>
                 <h1 className="text-4xl sm:text-6xl font-serif font-bold text-amber-100 tracking-widest mb-6 drop-shadow-lg">
-                    {FAMILY_SURNAME}氏生平
+                    {surname ? `${surname}氏生平` : "家族生平"}
                 </h1>
                 <div className="h-px w-32 mx-auto bg-gradient-to-r from-transparent via-amber-300/60 to-transparent mb-6" />
                 <p className="text-amber-200/70 text-lg sm:text-xl font-serif tracking-wide">
                     传承家族记忆 · 铭记先人功德
                 </p>
                 <p className="text-amber-300/50 text-sm mt-8 font-serif">
-                    共收录 {totalPages} 位族人生平
+                    共收录 {totalPages} 位族人
                 </p>
             </div>
 
             {/* 翻页提示 */}
             <div className="absolute bottom-8 inset-x-0 text-center">
-                <p className="text-amber-200/50 text-sm animate-pulse">
-                    点击右侧按钮开始阅读 →
+                <p className="text-amber-200/50 text-sm">
+                    ← → 翻页 · F 全屏 · Ctrl+F 目录
                 </p>
             </div>
         </div>

@@ -28,6 +28,11 @@ import { MemberDetailDialog } from "../member-detail-dialog";
 import { TourDialog } from "./tour-dialog";
 import { TourControls } from "./tour-controls";
 
+// 路径高亮颜色
+const PATH_COLOR = "#10b981"; // 翡翠绿:路径节点与连线
+const CURRENT_COLOR = "#f97316"; // 橙色:当前巡游到的节点
+const PATH_LINK_COLOR = "#34d399"; // 路径连线(比节点亮一档)
+
 // 动态导入 ForceGraph3D，禁用 SSR
 const ForceGraph3D = dynamic(() => import("react-force-graph-3d"), {
   ssr: false,
@@ -117,8 +122,43 @@ export function FamilyForceGraph({ data }: ForceGraphProps) {
         target: member.id,
       }));
 
+    // 婚姻连线 (粉色,双向去重)
+    const spouseKeys = new Set<string>();
+    data.forEach((m) => {
+      if (!m.spouse_id || m.spouse_id === m.id) return;
+      const key = `${Math.min(m.id, m.spouse_id)}-${Math.max(m.id, m.spouse_id)}`;
+      if (spouseKeys.has(key)) return;
+      spouseKeys.add(key);
+      links.push({ source: m.id, target: m.spouse_id, spouse: true } as any);
+    });
+
     return { nodes, links };
   }, [data]);
+
+  // 巡游路径的节点集合与连线集合 (用于 3D 高亮)
+  const pathMemberIds = useMemo(
+    () => new Set(tourPath.map((m) => m.id)),
+    [tourPath]
+  );
+  const pathLinkKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (let i = 0; i < tourPath.length - 1; i++) {
+      // 连线方向为 father -> child,两个方向都记录以容错
+      keys.add(`${tourPath[i].id}-${tourPath[i + 1].id}`);
+      keys.add(`${tourPath[i + 1].id}-${tourPath[i].id}`);
+    }
+    return keys;
+  }, [tourPath]);
+
+  const isPathLink = useCallback(
+    (link: any) => {
+      if (pathLinkKeys.size === 0) return false;
+      const s = typeof link.source === "object" ? link.source.id : link.source;
+      const t = typeof link.target === "object" ? link.target.id : link.target;
+      return pathLinkKeys.has(`${s}-${t}`);
+    },
+    [pathLinkKeys]
+  );
 
   // Tour Logic
   const startTour = (path: FamilyMemberNode[]) => {
@@ -169,8 +209,8 @@ export function FamilyForceGraph({ data }: ForceGraphProps) {
     if (node && node.x !== undefined && node.y !== undefined && node.z !== undefined) {
       setHighlightedId(node.id);
 
-      // Calculate distance for camera
-      const distance = 80;
+      // Calculate distance for camera (巡游时拉远一些,看清路径上下文)
+      const distance = 140;
       const distRatio = 1 + distance / Math.hypot(node.x, node.y, node.z);
 
       fgRef.current.cameraPosition(
@@ -337,19 +377,68 @@ export function FamilyForceGraph({ data }: ForceGraphProps) {
         nodeLabel="name"
         nodeAutoColorBy="generation" // 按代数着色
         nodeRelSize={6}
-        linkOpacity={0.3}
-        linkColor={() => linkColor}
-        linkDirectionalParticles={2} // 粒子效果指示方向
-        linkDirectionalParticleWidth={2}
+        linkOpacity={isTourActive ? 0.15 : 0.3}
+
+        // ── 路径高亮渲染 ──
+        // 路径节点放大,其余缩小
+        nodeVal={(node: any) =>
+          isTourActive
+            ? pathMemberIds.has(node.id)
+              ? 3.5
+              : 0.6
+            : 1
+        }
+        // 路径连线加粗提亮,其余变暗;婚姻连线始终粉色
+        linkWidth={(link: any) => {
+          if (link.spouse) return 2;
+          return isTourActive && isPathLink(link) ? 4 : 1;
+        }}
+        linkColor={(link: any) => {
+          if (link.spouse) return "#ec4899";
+          if (isTourActive) {
+            return isPathLink(link) ? PATH_LINK_COLOR : linkColor;
+          }
+          return linkColor;
+        }}
+        // 路径连线粒子更醒目、流动更快
+        linkDirectionalParticles={(link: any) =>
+          isTourActive && isPathLink(link) ? 5 : 2
+        }
+        linkDirectionalParticleWidth={(link: any) =>
+          isTourActive && isPathLink(link) ? 4 : 2
+        }
+        linkDirectionalParticleSpeed={(link: any) =>
+          isTourActive && isPathLink(link) ? 0.02 : 0.008
+        }
         
         // 节点文字渲染
         nodeThreeObjectExtend={true}
         nodeThreeObject={(node: any) => {
+          const isCurrent = node.id === highlightedId;
+          const isPath = isTourActive && pathMemberIds.has(node.id);
+
           const sprite = new SpriteText(node.name);
-          sprite.color = node.id === highlightedId ? "#ff0000" : nodeTextColor;
-          sprite.textHeight = 6;
+          if (isCurrent) {
+            // 当前巡游节点:橙色 + 放大 + 高亮背景
+            sprite.color = CURRENT_COLOR;
+            sprite.textHeight = 10;
+            sprite.backgroundColor = "rgba(249,115,22,0.18)";
+            sprite.borderColor = CURRENT_COLOR;
+            sprite.borderWidth = 0.6;
+          } else if (isPath) {
+            // 路径节点:翡翠绿
+            sprite.color = PATH_COLOR;
+            sprite.textHeight = 8;
+            sprite.backgroundColor = isDark ? "rgba(16,185,129,0.15)" : "rgba(16,185,129,0.12)";
+          } else if (isTourActive) {
+            // 巡游时无关节点:压暗
+            sprite.color = isDark ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.25)";
+            sprite.textHeight = 5;
+          } else {
+            sprite.color = node.id === highlightedId ? "#ff0000" : nodeTextColor;
+            sprite.textHeight = 6;
+          }
           sprite.padding = 2;
-          sprite.backgroundColor = isDark ? "rgba(0,0,0,0.5)" : "rgba(255,255,255,0.5)";
           sprite.borderRadius = 4;
           sprite.position.y = 12; // 显示在节点上方
           return sprite;
@@ -383,14 +472,18 @@ export function FamilyForceGraph({ data }: ForceGraphProps) {
 
       {isTourActive && (
         <TourControls
+          path={tourPath}
           currentStep={currentTourStep}
-          totalSteps={tourPath.length}
-          currentMember={tourPath[currentTourStep]}
-          nextMember={tourPath[currentTourStep + 1] || null}
           isPaused={isTourPaused}
           onPause={pauseTour}
           onResume={resumeTour}
           onStop={stopTour}
+          onStepClick={(step) => {
+            // 跳转时清除计时器,由 step 变化重新驱动
+            if (tourTimeoutRef.current) clearTimeout(tourTimeoutRef.current);
+            setIsTourPaused(false);
+            setCurrentTourStep(step);
+          }}
         />
       )}
 

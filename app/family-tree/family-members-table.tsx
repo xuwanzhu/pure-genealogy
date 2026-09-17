@@ -50,6 +50,10 @@ interface FamilyMembersTableProps {
   currentPage: number;
   pageSize: number;
   searchQuery: string;
+  /** 管理员才有编辑权限,访客只读 */
+  isAdmin?: boolean;
+  /** 家族姓氏 */
+  surname?: string;
 }
 
 export function FamilyMembersTable({
@@ -58,6 +62,8 @@ export function FamilyMembersTable({
   currentPage,
   pageSize,
   searchQuery,
+  isAdmin = false,
+  surname,
 }: FamilyMembersTableProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -86,7 +92,7 @@ export function FamilyMembersTable({
     gender: "",
     official_position: "",
     is_alive: true,
-    spouse: "",
+    spouse_id: "",
     remarks: "",
     birthday: "",
     death_date: "",
@@ -178,7 +184,7 @@ export function FamilyMembersTable({
       gender: "",
       official_position: "",
       is_alive: true,
-      spouse: "",
+      spouse_id: "",
       remarks: "",
       birthday: "",
       death_date: "",
@@ -204,7 +210,7 @@ export function FamilyMembersTable({
       gender: member.gender ?? "",
       official_position: member.official_position ?? "",
       is_alive: member.is_alive,
-      spouse: member.spouse ?? "",
+      spouse_id: member.spouse_id?.toString() ?? "",
       remarks: member.remarks ?? "",
       birthday: member.birthday ?? "",
       death_date: member.death_date ?? "",
@@ -241,7 +247,9 @@ export function FamilyMembersTable({
       gender: (formData.gender as "男" | "女") || null,
       official_position: formData.official_position || null,
       is_alive: formData.is_alive,
-      spouse: formData.spouse || null,
+      spouse_id: (formData.spouse_id && formData.spouse_id !== "null")
+        ? parseInt(formData.spouse_id)
+        : null,
       remarks: formData.remarks || null,
       birthday: formData.birthday || null,
       death_date: (!formData.is_alive && formData.death_date) ? formData.death_date : null,
@@ -282,24 +290,26 @@ export function FamilyMembersTable({
           </Button>
         </form>
 
-        {/* 操作按钮 */}
-        <div className="flex gap-2 flex-wrap w-full lg:w-auto">
-          <ImportMembersDialog onSuccess={() => router.refresh()} />
-          
-          <Button onClick={handleOpenAddDialog}>
-            <Plus className="h-4 w-4 mr-2" />
-            新增
-          </Button>
+        {/* 操作按钮 (仅管理员可见) */}
+        {isAdmin && (
+          <div className="flex gap-2 flex-wrap w-full lg:w-auto">
+            <ImportMembersDialog onSuccess={() => router.refresh()} surname={surname} />
 
-          <Button
-            variant="destructive"
-            onClick={handleDelete}
-            disabled={selectedIds.size === 0 || isDeleting}
-          >
-            {isDeleting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}
-            删除 {selectedIds.size > 0 && `(${selectedIds.size})`}
-          </Button>
-        </div>
+            <Button onClick={handleOpenAddDialog}>
+              <Plus className="h-4 w-4 mr-2" />
+              新增
+            </Button>
+
+            <Button
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={selectedIds.size === 0 || isDeleting}
+            >
+              {isDeleting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}
+              删除 {selectedIds.size > 0 && `(${selectedIds.size})`}
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* 新增/编辑弹窗 */}
@@ -508,17 +518,35 @@ export function FamilyMembersTable({
 
                 {/* 配偶 */}
                 <div className="grid grid-cols-4 items-center gap-4">
-                  <Label htmlFor="spouse" className="text-right">
+                  <Label htmlFor="spouse_id" className="text-right">
                     配偶
                   </Label>
-                  <Input
-                    id="spouse"
-                    value={formData.spouse}
-                    onChange={(e) =>
-                      setFormData({ ...formData, spouse: e.target.value })
-                    }
-                    className="col-span-3"
-                  />
+                  <div className="col-span-3">
+                    <Select
+                      value={formData.spouse_id || "null"}
+                      onValueChange={(value) =>
+                        setFormData({ ...formData, spouse_id: value === "null" ? "" : value })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="选择配偶" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="null">无</SelectItem>
+                        {parentOptions
+                          .filter((p) => p.id !== editingMember?.id)
+                          .map((p) => (
+                            <SelectItem key={p.id} value={p.id.toString()}>
+                              {p.name}
+                              {p.generation !== null ? ` (第${p.generation}世)` : ""}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      选择族内成员建立配偶关系；如需新增配偶，可先创建该成员再关联
+                    </p>
+                  </div>
                 </div>
 
                 {/* 备注 / 生平事迹 */}
@@ -557,17 +585,19 @@ export function FamilyMembersTable({
       </Dialog>
 
       {/* 表格 */}
-      <div className={cn("border rounded-lg transition-opacity duration-200", isPending && "opacity-60 pointer-events-none")}>
+      <div className={cn("rounded-2xl border border-foreground/10 shadow-sm overflow-hidden transition-opacity duration-200", isPending && "opacity-60 pointer-events-none")}>
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-12">
-                <Checkbox
-                  checked={allSelected}
-                  onCheckedChange={handleSelectAll}
-                  aria-label="全选"
-                />
-              </TableHead>
+              {isAdmin && (
+                <TableHead className="w-12">
+                  <Checkbox
+                    checked={allSelected}
+                    onCheckedChange={handleSelectAll}
+                    aria-label="全选"
+                  />
+                </TableHead>
+              )}
               <TableHead className="w-16">ID</TableHead>
               <TableHead>姓名</TableHead>
               <TableHead className="w-20">世代</TableHead>
@@ -587,7 +617,7 @@ export function FamilyMembersTable({
           <TableBody>
             {initialData.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={14} className="h-24 text-center">
+                <TableCell colSpan={isAdmin ? 14 : 13} className="h-24 text-center">
                   暂无数据
                 </TableCell>
               </TableRow>
@@ -597,61 +627,94 @@ export function FamilyMembersTable({
                   key={member.id}
                   data-state={selectedIds.has(member.id) ? "selected" : undefined}
                 >
-                  <TableCell>
-                    <Checkbox
-                      checked={selectedIds.has(member.id)}
-                      onCheckedChange={(checked) =>
-                        handleSelectOne(member.id, checked as boolean)
-                      }
-                      aria-label={`选择 ${member.name}`}
-                    />
-                  </TableCell>
+                  {isAdmin && (
+                    <TableCell>
+                      <Checkbox
+                        checked={selectedIds.has(member.id)}
+                        onCheckedChange={(checked) =>
+                          handleSelectOne(member.id, checked as boolean)
+                        }
+                        aria-label={`选择 ${member.name}`}
+                      />
+                    </TableCell>
+                  )}
                   <TableCell className="font-mono">{member.id}</TableCell>
                   <TableCell className="font-medium">
-                    <button
-                      type="button"
-                      onClick={() => handleOpenEditDialog(member)}
-                      className="text-primary hover:underline cursor-pointer text-left"
-                    >
-                      {member.name}
-                    </button>
+                    {isAdmin ? (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditDialog(member)}
+                        className="text-primary hover:underline underline-offset-4 cursor-pointer text-left font-semibold"
+                      >
+                        {member.name}
+                      </button>
+                    ) : (
+                      <span className="font-semibold">{member.name}</span>
+                    )}
                   </TableCell>
-                  <TableCell>{member.generation ?? "-"}</TableCell>
-                  <TableCell>{member.sibling_order ?? "-"}</TableCell>
                   <TableCell>
-                    {member.father_id && member.father_name ? (
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          disabled={loadingFatherId === member.father_id}
-                          onClick={async () => {
-                            if (!member.father_id) return;
-                            setLoadingFatherId(member.father_id);
-                            try {
-                              const fatherData = await fetchMemberById(member.father_id);
-                              if (fatherData) {
-                                handleOpenEditDialog(fatherData);
-                              }
-                            } finally {
-                              setLoadingFatherId(null);
-                            }
-                          }}
-                          className={cn(
-                            "text-primary hover:underline cursor-pointer text-left",
-                            loadingFatherId === member.father_id && "opacity-70 cursor-wait"
-                          )}
-                        >
-                          {member.father_name}
-                        </button>
-                        {loadingFatherId === member.father_id && (
-                          <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-                        )}
-                      </div>
+                    {member.generation !== null ? (
+                      <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-primary/12 px-1.5 text-xs font-semibold text-primary tabular-nums dark:bg-primary/20">
+                        {member.generation}
+                      </span>
                     ) : (
                       "-"
                     )}
                   </TableCell>
-                  <TableCell>{member.gender ?? "-"}</TableCell>
+                  <TableCell>{member.sibling_order ?? "-"}</TableCell>
+                  <TableCell>
+                    {member.father_id && member.father_name ? (
+                      isAdmin ? (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={loadingFatherId === member.father_id}
+                            onClick={async () => {
+                              if (!member.father_id) return;
+                              setLoadingFatherId(member.father_id);
+                              try {
+                                const fatherData = await fetchMemberById(member.father_id);
+                                if (fatherData) {
+                                  handleOpenEditDialog(fatherData);
+                                }
+                              } finally {
+                                setLoadingFatherId(null);
+                              }
+                            }}
+                            className={cn(
+                              "text-primary hover:underline cursor-pointer text-left",
+                              loadingFatherId === member.father_id && "opacity-70 cursor-wait"
+                            )}
+                          >
+                            {member.father_name}
+                          </button>
+                          {loadingFatherId === member.father_id && (
+                            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-foreground/80">{member.father_name}</span>
+                      )
+                    ) : (
+                      "-"
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {member.gender ? (
+                      <span
+                        className={cn(
+                          "text-xs font-medium",
+                          member.gender === "男"
+                            ? "text-sky-700 dark:text-sky-400"
+                            : "text-pink-700 dark:text-pink-400"
+                        )}
+                      >
+                        {member.gender}
+                      </span>
+                    ) : (
+                      "-"
+                    )}
+                  </TableCell>
                   <TableCell>
                     {member.birthday
                       ? (() => {
@@ -670,8 +733,21 @@ export function FamilyMembersTable({
                   </TableCell>
                   <TableCell>{member.residence_place ?? "-"}</TableCell>
                   <TableCell>{member.official_position ?? "-"}</TableCell>
-                  <TableCell>{member.is_alive ? "是" : "否"}</TableCell>
-                  <TableCell>{member.spouse ?? "-"}</TableCell>
+                  <TableCell>
+                    <span className="inline-flex items-center gap-1.5 text-xs">
+                      <span
+                        className={cn(
+                          "h-1.5 w-1.5 rounded-full",
+                          member.is_alive ? "bg-emerald-500" : "bg-muted-foreground/40"
+                        )}
+                        aria-hidden
+                      />
+                      <span className={member.is_alive ? "text-foreground/80" : "text-muted-foreground"}>
+                        {member.is_alive ? "在世" : "已故"}
+                      </span>
+                    </span>
+                  </TableCell>
+                  <TableCell>{member.spouse_name ?? "-"}</TableCell>
                   <TableCell>
                     {member.remarks ? (
                       <Button 

@@ -1,5 +1,6 @@
 import { fetchFamilyMembers } from "./actions";
 import { FamilyMembersTable } from "./family-members-table";
+import { getSessionUser } from "@/lib/auth";
 
 interface FamilyMembersLoaderProps {
   page: number;
@@ -12,7 +13,10 @@ export async function FamilyMembersLoader({
   pageSize,
   search,
 }: FamilyMembersLoaderProps) {
-  const { data, count, error } = await fetchFamilyMembers(page, pageSize, search);
+  const [{ data, count, error }, user] = await Promise.all([
+    fetchFamilyMembers(page, pageSize, search),
+    getSessionUser(),
+  ]);
 
   if (error) {
     return (
@@ -29,6 +33,8 @@ export async function FamilyMembersLoader({
       currentPage={page}
       pageSize={pageSize}
       searchQuery={search}
+      isAdmin={user?.role === "admin"}
+      surname={user?.family_surname || undefined}
     />
   );
 }

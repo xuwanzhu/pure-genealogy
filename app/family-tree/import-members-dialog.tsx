@@ -24,13 +24,14 @@ import { Input } from "@/components/ui/input";
 import { Upload, Download, AlertCircle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { batchCreateFamilyMembers, type ImportMemberInput } from "./actions";
-import { FAMILY_SURNAME } from "@/lib/utils";
 
 interface ImportMembersDialogProps {
   onSuccess?: () => void;
+  /** 家族姓氏,用于导入模板示例 */
+  surname?: string;
 }
 
-export function ImportMembersDialog({ onSuccess }: ImportMembersDialogProps) {
+export function ImportMembersDialog({ onSuccess, surname }: ImportMembersDialogProps) {
   const [isOpen, setIsOpen] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(false);
   const [parsedData, setParsedData] = React.useState<ImportMemberInput[]>([]);
@@ -55,12 +56,13 @@ export function ImportMembersDialog({ onSuccess }: ImportMembersDialogProps) {
 
   // 下载模板
   const handleDownloadTemplate = () => {
+    const s = surname || "某";
     const ws = XLSX.utils.json_to_sheet([
       {
-        姓名: `${FAMILY_SURNAME}某某`,
+        姓名: `${s}某某`,
         世代: 20,
         排行: 1,
-        父亲姓名: `${FAMILY_SURNAME}父名`,
+        父亲姓名: `${s}父名`,
         性别: "男",
         官职: "进士",
         是否在世: "是",
@@ -194,7 +196,7 @@ export function ImportMembersDialog({ onSuccess }: ImportMembersDialogProps) {
                 {parsedData.some(m => m.father_name) && (
                   <span className="text-xs text-amber-600 flex items-center">
                     <AlertCircle className="h-3 w-3 mr-1" />
-                    注意：父亲姓名将自动匹配现有数据库，如果匹配失败则留空
+                    注意：父亲姓名将自动匹配数据库或同批次成员，无需按辈分排序，系统会自动按依赖顺序建立父子关系
                   </span>
                 )}
               </div>

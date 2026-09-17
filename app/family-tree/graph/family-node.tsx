@@ -92,7 +92,24 @@ function FamilyMemberNodeComponent({ data }: FamilyNodeProps) {
       <Handle
         type="target"
         position={Position.Top}
+        id="top"
         className="!w-3 !h-3 !bg-primary !border-2 !border-background"
+      />
+
+      {/* 左侧连接点 - 接收婚姻连线 */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="spouse-left"
+        className="!w-2 !h-2 !bg-pink-500 !border-2 !border-background !opacity-70"
+      />
+
+      {/* 右侧连接点 - 发出婚姻连线 */}
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="spouse-right"
+        className="!w-2 !h-2 !bg-pink-500 !border-2 !border-background !opacity-70"
       />
       
       {/* 节点内容 */}
@@ -105,14 +122,14 @@ function FamilyMemberNodeComponent({ data }: FamilyNodeProps) {
         </div>
         
         {/* 配偶信息 - 新增 */}
-        {nodeData.spouse && (
+        {nodeData.spouse_name && (
           <div className="flex items-center justify-center gap-0.5 w-full -mt-0.5 mb-0.5">
             <span className="text-[10px] text-muted-foreground/70 whitespace-nowrap select-none">配:</span>
             <span 
               className="text-xs text-muted-foreground font-medium truncate max-w-[80%] text-center"
-              title={nodeData.spouse}
+              title={nodeData.spouse_name}
             >
-              {nodeData.spouse}
+              {nodeData.spouse_name}
             </span>
           </div>
         )}
@@ -151,6 +168,7 @@ function FamilyMemberNodeComponent({ data }: FamilyNodeProps) {
         <Handle
           type="source"
           position={Position.Bottom}
+          id="bottom"
           isConnectable={false}
           className={cn(
             "!w-3 !h-3 !bg-primary !border-2 !border-background",

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useMemo, useState, useRef, useEffect, memo, type MouseEvent } from "react";
-import { createClient } from "@/lib/supabase/client";
 import {
   ReactFlow,
   Controls,
@@ -61,10 +60,12 @@ const edgeTypes = {
 
 interface FamilyTreeGraphProps {
   initialData: FamilyMemberNode[];
+  userPhone?: string;
 }
 
 interface FamilyTreeGraphInnerProps {
   initialData: FamilyMemberNode[];
+  userPhone?: string;
   onMemberClick?: (member: FamilyMemberNode) => void;
 }
 
@@ -73,8 +74,10 @@ const NODE_WIDTH = 160;
 const NODE_HEIGHT = 120; // 增加高度以容纳配偶信息
 const HORIZONTAL_GAP = 80;
 const VERTICAL_GAP = 120;
+const SPOUSE_GAP = 40; // 并排配偶节点间距
 
 // 使用 dagre 进行自动布局，避免连线交叉
+// 支持配偶: 无可见父亲的配偶与本人并排组成"情侣单元",以单元为布局单位
 function getLayoutedElements(
   members: FamilyMemberNode[],
   childrenMap: Map<number, number[]>,
@@ -86,8 +89,6 @@ function getLayoutedElements(
     return { nodes: [], edges: [] };
   }
 
-  // 1. 确定可见节点
-  const visibleMembers: FamilyMemberNode[] = [];
   const memberMap = new Map(members.map((m) => [m.id, m]));
 
   // 找到根节点（没有父亲，或父亲不在当前列表中）
@@ -98,12 +99,8 @@ function getLayoutedElements(
   // 获取根节点的代数，用于计算相对代数偏移量
   const rootGeneration = roots.length > 0 ? (roots[0].generation || 1) : 1;
 
-  // 2. 计算支系颜色
-  // 逻辑：找到根节点的直接子节点（各大房头），分配颜色，并传递给后代
-  // 存储的是 HSL 对象，方便后续计算梯度
+  // 1. 计算支系颜色
   const memberBaseColorMap = new Map<number, HSLColor>();
-
-  // 辅助函数：递归设置颜色
   const setDescendantColors = (memberId: number, color: HSLColor) => {
     memberBaseColorMap.set(memberId, color);
     const children = childrenMap.get(memberId) || [];
@@ -113,8 +110,6 @@ function getLayoutedElements(
       }
     });
   };
-
-  // 遍历所有根节点
   roots.forEach(root => {
     const children = childrenMap.get(root.id) || [];
     children.forEach((childId, index) => {
@@ -123,9 +118,10 @@ function getLayoutedElements(
     });
   });
 
-  // BFS 遍历生成可见列表
-  const queue = [...roots];
+  // 2. BFS 生成可见成员 (配偶跟随显示)
+  const visibleMembers: FamilyMemberNode[] = [];
   const visited = new Set<number>();
+  const queue = [...roots];
 
   while (queue.length > 0) {
     const member = queue.shift()!;
@@ -133,6 +129,15 @@ function getLayoutedElements(
 
     visited.add(member.id);
     visibleMembers.push(member);
+
+    // 配偶跟随入队 (配偶也是族谱成员)
+    if (
+      member.spouse_id &&
+      memberMap.has(member.spouse_id) &&
+      !visited.has(member.spouse_id)
+    ) {
+      queue.push(memberMap.get(member.spouse_id)!);
+    }
 
     // 如果未折叠，则添加子节点
     if (!collapsedIds.has(member.id)) {
@@ -146,116 +151,227 @@ function getLayoutedElements(
     }
   }
 
-  // 3. 创建 dagre 图
+  // 3. 组建"情侣单元": 配偶自身无可见父亲时,与本人并排显示
+  //    (有可见父亲的配偶挂在自己父亲下方,婚姻关系用跨单元连线表达)
+  const pairOf = new Map<number, number>();
+  visibleMembers.forEach((m) => {
+    if (pairOf.has(m.id)) return;
+    if (!m.spouse_id || !visited.has(m.spouse_id)) return;
+    const spouse = memberMap.get(m.spouse_id)!;
+    if (spouse.id === m.id) return;
+    const spouseHasVisibleFather =
+      !!spouse.father_id && visited.has(spouse.father_id);
+    if (spouseHasVisibleFather || pairOf.has(spouse.id)) return;
+    pairOf.set(m.id, spouse.id);
+    pairOf.set(spouse.id, m.id);
+  });
+
+  // 单元主从: 有子女者为血缘方(主,居左),无差异时 id 小者为主
+  const isPrimary = (a: FamilyMemberNode, b: FamilyMemberNode): boolean => {
+    const aChildren = childrenMap.get(a.id)?.length || 0;
+    const bChildren = childrenMap.get(b.id)?.length || 0;
+    if (aChildren !== bChildren) return aChildren > bChildren;
+    return a.id < b.id;
+  };
+
+  const unitOf = new Map<number, string>(); // memberId -> unitKey
+  const unitPrimary = new Map<string, number>(); // unitKey -> 主成员(左)
+  const unitSpouse = new Map<string, number>(); // unitKey -> 配偶(右)
+
+  visibleMembers.forEach((m) => {
+    if (unitOf.has(m.id)) return;
+    const partnerId = pairOf.get(m.id);
+    if (partnerId !== undefined) {
+      const partner = memberMap.get(partnerId)!;
+      if (isPrimary(m, partner)) {
+        const unitKey = `unit-${m.id}`;
+        unitOf.set(m.id, unitKey);
+        unitOf.set(partnerId, unitKey);
+        unitPrimary.set(unitKey, m.id);
+        unitSpouse.set(unitKey, partnerId);
+      }
+      // 从属方等待主方建立单元
+      return;
+    }
+    const unitKey = `unit-${m.id}`;
+    unitOf.set(m.id, unitKey);
+    unitPrimary.set(unitKey, m.id);
+  });
+
+  // 4. dagre 布局 (以单元为布局单位)
   const dagreGraph = new dagre.graphlib.Graph();
   dagreGraph.setDefaultEdgeLabel(() => ({}));
   dagreGraph.setGraph({
     rankdir: "TB", // 从上到下布局
     nodesep: HORIZONTAL_GAP, // 同层节点间距
     ranksep: VERTICAL_GAP, // 层间距
-    // align: "UL", // Removed this to enable center balancing
   });
 
-  // 添加可见节点到 dagre 图
-  visibleMembers.forEach((member) => {
-    dagreGraph.setNode(String(member.id), {
-      width: NODE_WIDTH,
-      height: NODE_HEIGHT,
-    });
+  const unitWidth = (key: string) =>
+    unitSpouse.has(key) ? NODE_WIDTH * 2 + SPOUSE_GAP : NODE_WIDTH;
+
+  new Set(unitOf.values()).forEach((key) => {
+    dagreGraph.setNode(key, { width: unitWidth(key), height: NODE_HEIGHT });
   });
 
-  // 添加可见边到 dagre 图
-  const edges: Edge[] = [];
+  // 父子边 (单元到单元)
   visibleMembers.forEach((member) => {
-    if (member.father_id) {
-      // 确保父节点也在可见列表中
-      const fatherExists = visibleMembers.some((m) => m.id === member.father_id);
-      if (fatherExists) {
-        dagreGraph.setEdge(String(member.father_id), String(member.id));
-
-        // 获取连线颜色：使用支系的【基准色】（最深色），作为树干颜色
-        const baseColor = memberBaseColorMap.get(member.id);
-        const edgeColor = baseColor
-          ? generateBranchColor(baseColor, 0) // 始终使用第0级（最深）颜色
-          : "hsl(var(--muted-foreground))";
-
-        edges.push({
-          id: `e${member.father_id}-${member.id}`,
-          source: String(member.father_id),
-          target: String(member.id),
-          type: "flowing",
-          animated: false,
-          style: {
-            stroke: edgeColor,
-            strokeWidth: 2,
-            opacity: 0.6 // 稍微降低透明度，让文字更突出
-          },
-        });
-      }
-    }
+    if (!member.father_id) return;
+    const father = memberMap.get(member.father_id);
+    if (!father || !visited.has(father.id)) return;
+    const fatherUnit = unitOf.get(father.id);
+    const childUnit = unitOf.get(member.id);
+    if (!fatherUnit || !childUnit || fatherUnit === childUnit) return;
+    dagreGraph.setEdge(fatherUnit, childUnit);
   });
 
   // 计算布局
   dagre.layout(dagreGraph);
 
-  // 4. 转换为 React Flow 节点
+  // 5. 拆分单元为 React Flow 节点 (主成员居左,配偶居右)
   let minX = Infinity;
   const generationYMap = new Map<number, { totalY: number; count: number }>();
+  const memberNodes: Node[] = [];
 
-  const memberNodes: Node[] = visibleMembers.map((member) => {
-    const nodeWithPosition = dagreGraph.node(String(member.id));
+  const buildNode = (member: FamilyMemberNode, x: number, y: number) => {
     const hasChildren = (childrenMap.get(member.id)?.length || 0) > 0;
-
-    // 计算左上角位置
-    const x = nodeWithPosition.x - NODE_WIDTH / 2;
-    const y = nodeWithPosition.y - NODE_HEIGHT / 2;
-
-    // 更新全局 minX
     if (x < minX) minX = x;
 
     // 收集世代 Y 坐标信息
     if (member.generation) {
       const current = generationYMap.get(member.generation) || { totalY: 0, count: 0 };
       generationYMap.set(member.generation, {
-        totalY: current.totalY + nodeWithPosition.y,
+        totalY: current.totalY + (y + NODE_HEIGHT / 2),
         count: current.count + 1
       });
     }
 
-    // 计算特定节点的渐变颜色
     const baseColor = memberBaseColorMap.get(member.id);
-    // 代数偏移量：当前代数 - (根节点代数 + 1)。这样根节点的儿子(房头)偏移为0，也就是最深色。
-    // 如果 member.generation 为 null，默认给 0
     const genOffset = (member.generation || rootGeneration) - (rootGeneration + 1);
     const nodeColor = baseColor
       ? generateBranchColor(baseColor, Math.max(0, genOffset))
       : undefined;
 
-    const nodeData: FamilyNodeData = {
-      ...member,
-      isHighlighted: member.id === highlightedId,
-      hasChildren,
-      collapsed: collapsedIds.has(member.id),
-      onToggleCollapse,
-      branchColor: nodeColor, // 传递计算后的具体颜色
-    };
-
-    return {
+    memberNodes.push({
       id: String(member.id),
       type: "familyMember",
       position: { x, y },
-      data: nodeData,
-    };
+      data: {
+        ...member,
+        isHighlighted: member.id === highlightedId,
+        hasChildren,
+        collapsed: collapsedIds.has(member.id),
+        onToggleCollapse,
+        branchColor: nodeColor,
+      } satisfies FamilyNodeData,
+    });
+  };
+
+  new Set(unitOf.values()).forEach((key) => {
+    const unitNode = dagreGraph.node(key);
+    if (!unitNode) return;
+    const unitW = unitWidth(key);
+    const unitX = unitNode.x - unitW / 2;
+    const y = unitNode.y - NODE_HEIGHT / 2;
+
+    const primaryId = unitPrimary.get(key)!;
+    const primary = memberMap.get(primaryId)!;
+    buildNode(primary, unitX, y);
+
+    const spouseId = unitSpouse.get(key);
+    if (spouseId !== undefined) {
+      const spouse = memberMap.get(spouseId)!;
+      buildNode(spouse, unitX + NODE_WIDTH + SPOUSE_GAP, y);
+    }
   });
 
-  // 5. 生成世代标尺节点
+  // 6. 生成连线
+  const edges: Edge[] = [];
+
+  // 父子连线 (从父亲底部到子女顶部)
+  visibleMembers.forEach((member) => {
+    if (!member.father_id) return;
+    const father = memberMap.get(member.father_id);
+    if (!father || !visited.has(father.id)) return;
+
+    const baseColor = memberBaseColorMap.get(member.id);
+    const edgeColor = baseColor
+      ? generateBranchColor(baseColor, 0)
+      : "hsl(var(--muted-foreground))";
+
+    edges.push({
+      id: `e${father.id}-${member.id}`,
+      source: String(father.id),
+      target: String(member.id),
+      sourceHandle: "bottom",
+      targetHandle: "top",
+      type: "flowing",
+      animated: false,
+      style: {
+        stroke: edgeColor,
+        strokeWidth: 2,
+        opacity: 0.6
+      },
+    });
+  });
+
+  // 婚姻连线: 同单元水平相连,跨单元曲线相连 (粉色)
+  const spouseEdgeIds = new Set<string>();
+  visibleMembers.forEach((m) => {
+    if (!m.spouse_id || !visited.has(m.spouse_id)) return;
+    const spouse = memberMap.get(m.spouse_id)!;
+    if (spouse.id === m.id) return;
+    const minId = Math.min(m.id, spouse.id);
+    const maxId = Math.max(m.id, spouse.id);
+    const edgeId = `s${minId}-${maxId}`;
+    if (spouseEdgeIds.has(edgeId)) return;
+    spouseEdgeIds.add(edgeId);
+
+    const sameUnit = unitOf.get(m.id) === unitOf.get(spouse.id);
+    if (sameUnit) {
+      const unitKey = unitOf.get(m.id)!;
+      const pId = unitPrimary.get(unitKey)!;
+      const sId = unitSpouse.get(unitKey)!;
+      edges.push({
+        id: edgeId,
+        source: String(pId),
+        target: String(sId),
+        sourceHandle: "spouse-right",
+        targetHandle: "spouse-left",
+        type: "straight",
+        animated: false,
+        style: {
+          stroke: "#ec4899",
+          strokeWidth: 2.5,
+          opacity: 0.65,
+        },
+      });
+    } else {
+      // 跨单元婚姻 (配偶双方各自挂在自己父亲下)
+      edges.push({
+        id: edgeId,
+        source: String(minId),
+        target: String(maxId),
+        sourceHandle: "spouse-right",
+        targetHandle: "spouse-left",
+        type: "default",
+        animated: false,
+        style: {
+          stroke: "#ec4899",
+          strokeWidth: 2,
+          opacity: 0.5,
+          strokeDasharray: "5 3",
+        },
+      });
+    }
+  });
+
+  // 7. 生成世代标尺节点
   const generationNodes: Node[] = [];
-  // 标尺 X 坐标：在最左侧节点的基础上再向左偏移
   const labelX = minX - 140;
 
   generationYMap.forEach(({ totalY, count }, generation) => {
     const avgY = totalY / count;
-    // 调整 Y 坐标使其垂直居中
     const labelY = avgY - 40;
 
     generationNodes.push({
@@ -268,28 +384,16 @@ function getLayoutedElements(
       },
       draggable: false,
       selectable: false,
-      zIndex: -1, // 放在底层
+      zIndex: -1,
     });
   });
 
   return { nodes: [...memberNodes, ...generationNodes], edges };
 }
 
-const FamilyTreeGraphInner = memo(function FamilyTreeGraphInner({ initialData, onMemberClick }: FamilyTreeGraphInnerProps) {
+const FamilyTreeGraphInner = memo(function FamilyTreeGraphInner({ initialData, userPhone, onMemberClick }: FamilyTreeGraphInnerProps) {
   const reactFlowInstance = useReactFlow();
   const containerRef = useRef<HTMLDivElement>(null);
-  const [userEmail, setUserEmail] = useState<string>("");
-
-  useEffect(() => {
-    const fetchUser = async () => {
-      const supabase = createClient();
-      const { data: { user } = {} } = await supabase.auth.getUser();
-      if (user?.email) {
-        setUserEmail(user.email);
-      }
-    };
-    fetchUser();
-  }, []);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightedId, setHighlightedId] = useState<number | null>(null);
@@ -356,6 +460,18 @@ const FamilyTreeGraphInner = memo(function FamilyTreeGraphInner({ initialData, o
         queue.push(childId);
       });
     }
+
+    // 3. 配偶跟随高亮 (仅一层: 路径上成员的配偶与婚姻连线一起亮)
+    initialData.forEach((m) => {
+      if (!m.spouse_id) return;
+      if (pathSet.has(String(m.id)) || pathSet.has(String(m.spouse_id))) {
+        pathSet.add(String(m.id));
+        pathSet.add(String(m.spouse_id));
+        const minId = Math.min(m.id, m.spouse_id);
+        const maxId = Math.max(m.id, m.spouse_id);
+        pathSet.add(`s${minId}-${maxId}`);
+      }
+    });
 
     setHighlightedPathIds(pathSet);
   }, [highlightedId, initialData, childrenMap]);
@@ -662,7 +778,7 @@ const FamilyTreeGraphInner = memo(function FamilyTreeGraphInner({ initialData, o
     }
 
     // 4. 绘制水印 (平铺)
-    const watermarkText = userEmail || 'Liu Family';
+    const watermarkText = userPhone || 'Family Tree';
     ctx.save();
     ctx.rotate(-30 * Math.PI / 180);
     ctx.font = "16px sans-serif";
@@ -708,7 +824,7 @@ const FamilyTreeGraphInner = memo(function FamilyTreeGraphInner({ initialData, o
     a.setAttribute("download", `family-tree-${new Date().toISOString().split('T')[0]}.jpg`);
     a.setAttribute("href", finalDataUrl);
     a.click();
-  }, [nodes, userEmail]);
+  }, [nodes, userPhone]);
 
   const toggleDraggable = useCallback(() => {
     setIsDraggable((prev) => !prev);
@@ -860,7 +976,7 @@ const FamilyTreeGraphInner = memo(function FamilyTreeGraphInner({ initialData, o
   );
 });
 
-export function FamilyTreeGraph({ initialData }: FamilyTreeGraphProps) {
+export function FamilyTreeGraph({ initialData, userPhone }: FamilyTreeGraphProps) {
   const [selectedMember, setSelectedMember] = useState<FamilyMemberNode | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
 
@@ -883,7 +999,7 @@ export function FamilyTreeGraph({ initialData }: FamilyTreeGraphProps) {
   return (
     <>
       <ReactFlowProvider>
-        <FamilyTreeGraphInner initialData={initialData} onMemberClick={handleMemberClick} />
+        <FamilyTreeGraphInner initialData={initialData} userPhone={userPhone} onMemberClick={handleMemberClick} />
       </ReactFlowProvider>
 
       {/* 成员详情弹窗 */}

@@ -1,6 +1,7 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
+import { query } from "@/lib/db";
+import { getSessionUser } from "@/lib/auth";
 
 export interface FamilyMemberNode {
   id: number;
@@ -11,7 +12,8 @@ export interface FamilyMemberNode {
   gender: "男" | "女" | null;
   official_position: string | null;
   is_alive: boolean;
-  spouse: string | null;
+  spouse_id: number | null;
+  spouse_name: string | null;
   remarks: string | null;
   birthday: string | null;
   death_date: string | null;
@@ -23,18 +25,34 @@ export interface FetchGraphResult {
   error: string | null;
 }
 
+interface MemberRow extends Omit<FamilyMemberNode, "is_alive"> {
+  is_alive: number;
+}
+
 export async function fetchAllFamilyMembers(): Promise<FetchGraphResult> {
-  const supabase = await createClient();
+  try {
+    const user = await getSessionUser();
+    if (user?.family_id == null) return { data: [], error: null };
 
-  const { data, error } = await supabase
-    .from("family_members")
-    .select("id, name, generation, sibling_order, father_id, gender, official_position, is_alive, spouse, remarks, birthday, death_date, residence_place")
-    .order("generation", { ascending: true })
-    .order("sibling_order", { ascending: true });
+    const rows = await query<MemberRow>(
+      `SELECT m.id, m.name, m.generation, m.sibling_order, m.father_id, m.gender,
+              m.official_position, m.is_alive, m.spouse_id, s.name AS spouse_name,
+              m.remarks, m.birthday, m.death_date, m.residence_place
+       FROM family_members m
+       LEFT JOIN family_members s ON s.id = m.spouse_id
+       WHERE m.family_id = ?
+       ORDER BY m.generation IS NULL ASC, m.generation ASC,
+                m.sibling_order IS NULL ASC, m.sibling_order ASC`,
+      [user.family_id]
+    );
 
-  if (error) {
-    return { data: [], error: error.message };
+    const data: FamilyMemberNode[] = rows.map((r) => ({
+      ...r,
+      is_alive: !!r.is_alive,
+    }));
+
+    return { data, error: null };
+  } catch (error) {
+    return { data: [], error: (error as Error).message };
   }
-
-  return { data: data || [], error: null };
 }

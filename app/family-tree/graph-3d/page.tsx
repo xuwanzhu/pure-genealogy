@@ -37,7 +37,14 @@ export default function FamilyTreeGraph3DPage() {
   return (
     <div className="container mx-auto py-6 px-4">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 sm:gap-0 mb-6">
-        <h1 className="text-3xl font-bold">族谱关系图 (3D)</h1>
+        <div>
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground/70">
+            3D Constellation
+          </p>
+          <h1 className="text-3xl font-bold tracking-tight">
+            <span className="text-gradient">族谱关系图 (3D)</span>
+          </h1>
+        </div>
         <Button variant="outline" asChild>
           <Link href="/family-tree/graph">
             <LayoutDashboard className="mr-2 h-4 w-4" />

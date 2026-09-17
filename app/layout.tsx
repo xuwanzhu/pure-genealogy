@@ -4,7 +4,6 @@ import { ThemeProvider } from "next-themes";
 import { Analytics } from "@vercel/analytics/next";
 import NextTopLoader from "nextjs-toploader";
 import "./globals.css";
-import { FAMILY_SURNAME } from "@/lib/utils";
 
 const defaultUrl = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
@@ -12,8 +11,8 @@ const defaultUrl = process.env.VERCEL_URL
 
 export const metadata: Metadata = {
   metadataBase: new URL(defaultUrl),
-  title: `${FAMILY_SURNAME}氏族谱管理系统`,
-  description: "基于 Next.js 和 Supabase 构建的家族族谱管理系统",
+  title: "家族族谱管理系统",
+  description: "基于 Next.js 和 MySQL 构建的多家族族谱管理系统",
 };
 
 const geistSans = Geist({
@@ -36,11 +35,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" suppressHydrationWarning>
-      <body className={`${geistSans.variable} ${notoSerifSC.variable} font-serif antialiased`}>
-        <NextTopLoader color="#2A6E4D" showSpinner={false} shadow="0 0 10px #2A6E4D,0 0 5px #2A6E4D" />
+      <body className={`${geistSans.variable} ${notoSerifSC.variable} font-sans antialiased`}>
+        <NextTopLoader color="#10b981" showSpinner={false} shadow="0 0 10px #10b981,0 0 5px #10b981" />
         <ThemeProvider
           attribute="class"
-          defaultTheme="system"
+          defaultTheme="dark"
           enableSystem
           disableTransitionOnChange
         >

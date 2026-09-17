@@ -12,8 +12,9 @@ const BiographyBookInner = dynamic(
 
 interface BiographyBookLoaderProps {
     members: BiographyMember[];
+    surname?: string;
 }
 
-export function BiographyBookLoader({ members }: BiographyBookLoaderProps) {
-    return <BiographyBookInner members={members} />;
+export function BiographyBookLoader({ members, surname }: BiographyBookLoaderProps) {
+    return <BiographyBookInner members={members} surname={surname} />;
 }

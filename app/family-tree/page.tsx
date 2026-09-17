@@ -17,10 +17,10 @@ function TableSkeleton() {
           <div className="h-9 w-20 bg-muted animate-pulse rounded-md" />
         </div>
       </div>
-      <div className="border rounded-lg">
+      <div className="border rounded-2xl overflow-hidden">
         <div className="h-10 bg-muted/50 border-b" />
         {SKELETON_ROWS.map((id) => (
-          <div key={id} className="h-12 border-b animate-pulse bg-muted/20" />
+          <div key={id} className="h-12 border-b last:border-0 animate-pulse bg-muted/20" />
         ))}
       </div>
     </div>
@@ -43,7 +43,22 @@ async function FamilyMembersWrapper({
 export default function FamilyTreePage({ searchParams }: PageProps) {
   return (
     <div className="container mx-auto py-8 px-4">
-      <h1 className="text-3xl font-bold mb-6">族谱成员列表</h1>
+      {/* 页头:渐变大标题 + 英文副题 */}
+      <div className="mb-8 animate-rise">
+        <div className="flex items-end justify-between gap-4 flex-wrap">
+          <div>
+            <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground/70">
+              Members
+            </p>
+            <h1 className="text-3xl font-bold tracking-tight">
+              <span className="text-gradient">族谱成员</span>
+            </h1>
+          </div>
+          <p className="text-sm text-muted-foreground tracking-wide">
+            敬录先人名讳，长幼有序，脉络分明
+          </p>
+        </div>
+      </div>
 
       <Suspense fallback={<TableSkeleton />}>
         <FamilyMembersWrapper searchParams={searchParams} />

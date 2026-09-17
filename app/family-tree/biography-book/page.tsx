@@ -1,15 +1,22 @@
 import { Suspense } from "react";
 import { fetchMembersWithBiography } from "./actions";
 import { BiographyBookLoader } from "./biography-book-loader";
-import { FAMILY_SURNAME } from "@/lib/utils";
+import { getSessionUser } from "@/lib/auth";
 
-export const metadata = {
-    title: `${FAMILY_SURNAME}氏生平册`,
-    description: `${FAMILY_SURNAME}氏家族生平事迹集`,
-};
+export async function generateMetadata() {
+    const user = await getSessionUser();
+    const surname = user?.family_surname || "";
+    return {
+        title: surname ? `${surname}氏生平册` : "家族生平册",
+        description: "家族生平事迹集",
+    };
+}
 
 async function BookContent() {
-    const { data: members, error } = await fetchMembersWithBiography();
+    const [{ data: members, error }, user] = await Promise.all([
+        fetchMembersWithBiography(),
+        getSessionUser(),
+    ]);
 
     if (error) {
         return (
@@ -26,14 +33,14 @@ async function BookContent() {
         return (
             <div className="min-h-screen flex items-center justify-center bg-stone-900">
                 <div className="text-center text-white">
-                    <p className="text-lg">暂无生平事迹记录</p>
-                    <p className="text-sm text-white/60 mt-2">请先在成员管理中添加生平事迹</p>
+                    <p className="text-lg">暂无族谱成员</p>
+                    <p className="text-sm text-white/60 mt-2">请先在成员管理中添加成员，所有成员都将自动收入生平册</p>
                 </div>
             </div>
         );
     }
 
-    return <BiographyBookLoader members={members} />;
+    return <BiographyBookLoader members={members} surname={user?.family_surname || undefined} />;
 }
 
 export default function BiographyBookPage() {

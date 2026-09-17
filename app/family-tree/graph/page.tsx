@@ -4,6 +4,7 @@ import { FamilyTreeGraph } from "./family-tree-graph";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Box } from "lucide-react";
+import { getSessionUser } from "@/lib/auth";
 
 function GraphSkeleton() {
   return (
@@ -14,7 +15,10 @@ function GraphSkeleton() {
 }
 
 async function GraphLoader() {
-  const { data, error } = await fetchAllFamilyMembers();
+  const [{ data, error }, user] = await Promise.all([
+    fetchAllFamilyMembers(),
+    getSessionUser(),
+  ]);
 
   if (error) {
     return (
@@ -32,14 +36,21 @@ async function GraphLoader() {
     );
   }
 
-  return <FamilyTreeGraph initialData={data} />;
+  return <FamilyTreeGraph initialData={data} userPhone={user?.phone} />;
 }
 
 export default function FamilyTreeGraphPage() {
   return (
     <div className="container mx-auto py-8 px-4">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 sm:gap-0 mb-6">
-        <h1 className="text-3xl font-bold">族谱关系图</h1>
+        <div>
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.3em] text-muted-foreground/70">
+            Family Graph
+          </p>
+          <h1 className="text-3xl font-bold tracking-tight">
+            <span className="text-gradient">族谱关系图</span>
+          </h1>
+        </div>
         <Button variant="outline" asChild>
           <Link href="/family-tree/graph-3d">
             <Box className="mr-2 h-4 w-4" />

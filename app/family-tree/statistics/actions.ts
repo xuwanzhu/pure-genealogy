@@ -1,6 +1,7 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
+import { query } from "@/lib/db";
+import { getSessionUser } from "@/lib/auth";
 
 export interface StatisticsData {
   totalMembers: number;
@@ -9,28 +10,85 @@ export interface StatisticsData {
   statusStats: { name: string; value: number; fill: string }[];
   ageStats: { name: string; value: number }[];
   commonNames: { name: string; count: number }[];
+  /** 夫妻对数 (双向关联计为一对) */
+  couplePairs: number;
+  /** 家族繁衍的最大世代数 */
+  generations: number;
+  /** 人丁最兴旺的一世 */
+  peakGeneration: { name: string; value: number } | null;
+  /** 在世成员平均年龄 (仅统计有生日者) */
+  avgAge: number | null;
+  /** 在世最年长者 */
+  eldestAlive: { name: string; age: number } | null;
+  /** 享年最高纪录 (有生卒年份的已故成员) */
+  longevityRecord: { name: string; age: number } | null;
+}
+
+interface StatMember {
+  id: number;
+  name: string;
+  gender: "男" | "女" | null;
+  generation: number | null;
+  is_alive: number;
+  birthday: string | null;
+  death_date: string | null;
+  spouse_id: number | null;
+}
+
+/** 空统计 (无家族/无成员时返回) */
+function emptyStatistics(): StatisticsData {
+  return {
+    totalMembers: 0,
+    genderStats: [],
+    generationStats: [],
+    statusStats: [],
+    ageStats: [],
+    commonNames: [],
+    couplePairs: 0,
+    generations: 0,
+    peakGeneration: null,
+    avgAge: null,
+    eldestAlive: null,
+    longevityRecord: null,
+  };
+}
+
+/** 按出生日期计算周岁 */
+function calcAge(birthday: string, ref: Date): number | null {
+  const birth = new Date(birthday);
+  if (Number.isNaN(birth.getTime())) return null;
+  let age = ref.getFullYear() - birth.getFullYear();
+  const m = ref.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && ref.getDate() < birth.getDate())) age--;
+  return age;
 }
 
 export async function fetchFamilyStatistics(): Promise<{
   data: StatisticsData | null;
   error: string | null;
 }> {
-  const supabase = await createClient();
+  let members: StatMember[];
+  try {
+    const user = await getSessionUser();
+    if (user?.family_id == null) return { data: emptyStatistics(), error: null };
 
-  // Fetch only necessary fields for statistics to improve performance
-  const { data: members, error } = await supabase
-    .from("family_members")
-    .select("id, name, gender, generation, is_alive, birthday")
-    .order("generation", { ascending: true });
-
-  if (error || !members) {
+    members = await query<StatMember>(
+      `SELECT id, name, gender, generation, is_alive, birthday, death_date, spouse_id
+       FROM family_members
+       WHERE family_id = ?
+       ORDER BY generation IS NULL ASC, generation ASC`,
+      [user.family_id]
+    );
+  } catch (error) {
     console.error("Error fetching statistics data:", error);
-    return { data: null, error: error?.message || "Failed to fetch data" };
+    return { data: null, error: (error as Error).message };
   }
+
+  if (members.length === 0) return { data: emptyStatistics(), error: null };
 
   const totalMembers = members.length;
 
-  // 1. Gender Statistics
+  // 1. 性别统计
   const genderCounts = members.reduce(
     (acc, member) => {
       const gender = member.gender || "未知";
@@ -41,18 +99,14 @@ export async function fetchFamilyStatistics(): Promise<{
   );
 
   const genderStats = [
-    { name: "男", value: genderCounts["男"] || 0, fill: "#3b82f6" }, // blue-500
-    { name: "女", value: genderCounts["女"] || 0, fill: "#ec4899" }, // pink-500
+    { name: "男", value: genderCounts["男"] || 0, fill: "#10b981" },
+    { name: "女", value: genderCounts["女"] || 0, fill: "#ec4899" },
   ];
   if (genderCounts["未知"]) {
-    genderStats.push({
-      name: "未知",
-      value: genderCounts["未知"],
-      fill: "#94a3b8",
-    }); // slate-400
+    genderStats.push({ name: "未知", value: genderCounts["未知"], fill: "#94a3b8" });
   }
 
-  // 2. Generation Statistics
+  // 2. 世代统计
   const generationCounts = members.reduce(
     (acc, member) => {
       const gen = member.generation ? `第${member.generation}世` : "未知";
@@ -62,13 +116,10 @@ export async function fetchFamilyStatistics(): Promise<{
     {} as Record<string, number>
   );
 
-  // Sort generations properly
   const sortedGenerations = Object.keys(generationCounts).sort((a, b) => {
     if (a === "未知") return 1;
     if (b === "未知") return -1;
-    const genA = parseInt(a.replace(/\D/g, ""));
-    const genB = parseInt(b.replace(/\D/g, ""));
-    return genA - genB;
+    return parseInt(a.replace(/\D/g, "")) - parseInt(b.replace(/\D/g, ""));
   });
 
   const generationStats = sortedGenerations.map((gen) => ({
@@ -76,22 +127,32 @@ export async function fetchFamilyStatistics(): Promise<{
     value: generationCounts[gen],
   }));
 
-  // 3. Status Statistics (Alive vs Deceased)
+  // 已知世代的最大繁衍数 & 人丁最旺一世
+  let generations = 0;
+  let peakGeneration: { name: string; value: number } | null = null;
+  generationStats.forEach((g) => {
+    if (g.name !== "未知") {
+      generations = Math.max(generations, parseInt(g.name.replace(/\D/g, "")));
+      if (!peakGeneration || g.value > peakGeneration.value) peakGeneration = g;
+    }
+  });
+
+  // 3. 生死状态
   const statusCounts = members.reduce(
     (acc, member) => {
-      const status = member.is_alive ? "在世" : "已故";
-      acc[status] = (acc[status] || 0) + 1;
+      acc[member.is_alive ? "在世" : "已故"] =
+        (acc[member.is_alive ? "在世" : "已故"] || 0) + 1;
       return acc;
     },
     {} as Record<string, number>
   );
 
   const statusStats = [
-    { name: "在世", value: statusCounts["在世"] || 0, fill: "#22c55e" }, // green-500
-    { name: "已故", value: statusCounts["已故"] || 0, fill: "#64748b" }, // slate-500
+    { name: "在世", value: statusCounts["在世"] || 0, fill: "#10b981" },
+    { name: "已故", value: statusCounts["已故"] || 0, fill: "#94a3b8" },
   ];
 
-  // 4. Age Statistics (for Living Members with Birthday)
+  // 4. 年龄分段 (在世且有生日)
   const now = new Date();
   const ageGroups: Record<string, number> = {
     "0-10岁": 0,
@@ -105,13 +166,19 @@ export async function fetchFamilyStatistics(): Promise<{
     "80岁以上": 0,
   };
 
+  let ageSum = 0;
+  let ageCount = 0;
+  let eldestAlive: { name: string; age: number } | null = null;
+
   members.forEach((member) => {
     if (member.is_alive && member.birthday) {
-      const birthDate = new Date(member.birthday);
-      let age = now.getFullYear() - birthDate.getFullYear();
-      const m = now.getMonth() - birthDate.getMonth();
-      if (m < 0 || (m === 0 && now.getDate() < birthDate.getDate())) {
-        age--;
+      const age = calcAge(member.birthday, now);
+      if (age === null || age < 0) return;
+
+      ageSum += age;
+      ageCount++;
+      if (!eldestAlive || age > eldestAlive.age) {
+        eldestAlive = { name: member.name, age };
       }
 
       if (age <= 10) ageGroups["0-10岁"]++;
@@ -126,37 +193,38 @@ export async function fetchFamilyStatistics(): Promise<{
     }
   });
 
-  const ageStats = Object.entries(ageGroups).map(([name, value]) => ({
-    name,
-    value,
-  }));
+  const ageStats = Object.entries(ageGroups).map(([name, value]) => ({ name, value }));
+  const avgAge = ageCount > 0 ? Math.round((ageSum / ageCount) * 10) / 10 : null;
 
-  // 5. Common Names (Last character of name usually indicates generation name in some families, or just frequent names)
-  // Here we just count full names (duplicates) or maybe last character if we want to guess 'Zi' (style name) usage?
-  // Let's stick to just "Most common names" (duplicates) for now, or maybe "Given Name" frequency?
-  // Chinese names: Surname (1-2 chars) + Given Name (1-2 chars).
-  // Assuming full names are stored, getting the most frequent last character might be interesting for 'Generation Name' detection.
-  // Let's try to count the specific characters in names (excluding the first character as surname, assuming 1 char surname for simplicity or just count all chars in given name).
-  // Simple approach: Count full names (detect duplicates) and maybe the second character (often generation name).
+  // 5. 享年纪录 (已故且生卒日期齐全)
+  let longevityRecord: { name: string; age: number } | null = null;
+  members.forEach((member) => {
+    if (!member.is_alive && member.birthday && member.death_date) {
+      const death = new Date(member.death_date);
+      const age = calcAge(member.birthday, death);
+      if (age !== null && age >= 0 && (!longevityRecord || age > longevityRecord.age)) {
+        longevityRecord = { name: member.name, age };
+      }
+    }
+  });
 
-  // Let's do: Most frequent Given Names (excluding surname). Assuming surname is 1st char for now (imperfect but simple).
-  // Better: Just simple duplicate name check.
+  // 6. 夫妻对数 (双向关联只计一次: id < spouse_id)
+  const couplePairs = members.filter(
+    (m) => m.spouse_id !== null && m.id < (m.spouse_id as number)
+  ).length;
+
+  // 7. 名字第二字用字 (窥见字辈传承)
   const nameCounts: Record<string, number> = {};
   members.forEach((m) => {
-    // Naive assumption: First char is surname.
-    const givenName = m.name.length > 1 ? m.name.substring(1) : m.name;
-    // Count individual characters in given name for "Generation Name" (Zi) trends?
-    // Or just count the full name if duplicates exist.
-    // Let's count the 2nd character (often generation character).
     if (m.name.length >= 2) {
-      const genChar = m.name[1]; // 2nd character
+      const genChar = m.name[1];
       nameCounts[genChar] = (nameCounts[genChar] || 0) + 1;
     }
   });
 
   const commonNames = Object.entries(nameCounts)
     .sort(([, a], [, b]) => b - a)
-    .slice(0, 10)
+    .slice(0, 12)
     .map(([name, count]) => ({ name, count }));
 
   return {
@@ -167,6 +235,12 @@ export async function fetchFamilyStatistics(): Promise<{
       statusStats,
       ageStats,
       commonNames,
+      couplePairs,
+      generations,
+      peakGeneration,
+      avgAge,
+      eldestAlive,
+      longevityRecord,
     },
     error: null,
   };
